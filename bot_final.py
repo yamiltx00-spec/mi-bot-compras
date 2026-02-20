@@ -26,7 +26,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ============================================
-# CONFIGURACIÓN
+# CONFIGURACIÓN - VARIABLES DE ENTORNO RAILWAY
 # ============================================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -107,11 +107,6 @@ def get_metodo_pago_buttons():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============================================
-# HELPER
-# ============================================
-
-
 async def reply(update: Update, texto: str, **kwargs):
     if update.callback_query:
         await update.callback_query.answer()
@@ -124,18 +119,20 @@ async def reply(update: Update, texto: str, **kwargs):
 # GOOGLE SHEETS
 # ============================================
 
+
 def get_sheets_service():
     try:
         if not GOOGLE_CREDENTIALS_JSON:
             raise Exception("GOOGLE_CREDENTIALS_JSON no está definida")
         info = json.loads(GOOGLE_CREDENTIALS_JSON)
-        creds = google.oauth2.service_account.Credentials.from_service_account_info(
+        creds = service_account.Credentials.from_service_account_info(
             info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
-        return build('sheets', 'v4', credentials=creds)
+        return build("sheets", "v4", credentials=creds)
     except Exception as e:
         logging.error(f"Error Sheets service: {e}")
         raise
+
 
 def agregar_compra(datos):
     try:
@@ -736,8 +733,7 @@ async def detectar_respuesta_rapida(update: Update, context: ContextTypes.DEFAUL
     id_pedido = extraer_id_desde_texto(mensaje_original)
 
     if not id_pedido:
-        await update.message.reply_text("❌ No pude identificar el pedido")
-        return True
+        return False
 
     if "vendido" in texto_respuesta:
         compra = buscar_compra_por_id(id_pedido)
@@ -901,34 +897,8 @@ async def alerta_diaria(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================
-# BOTONES INLINE
+# CALLBACKS
 # ============================================
-
-
-async def inline_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if not autorizado(update):
-        return
-
-    data = query.data
-
-    if data == "btn_compra":
-        await query.message.reply_text(
-            "📸 *REGISTRAR COMPRA*\n\nEnvía la captura de pantalla del pedido.\n\nPara cancelar: /cancelar",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-        context.user_data["esperando_foto_compra"] = True
-
-    elif data == "btn_venta":
-        await query.message.reply_text(
-            "💰 *REGISTRAR VENTA*\n\nIndica el *ID del pedido* o sus últimos 4-5 dígitos:\n\n_Ejemplo: 3162_",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-        context.user_data["esperando_id_venta_inline"] = True
 
 
 async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -939,12 +909,26 @@ async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await procesar_metodo_rapido(update, context):
             return
 
-    if data.startswith("metodo_"):
-        return
+    if data == "btn_compra":
+        await query.answer()
+        await query.message.reply_text(
+            "📸 *REGISTRAR COMPRA*\n\nEnvía la captura de pantalla del pedido.\n\nPara cancelar: /cancelar",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data["esperando_foto_compra"] = True
 
-    if data.startswith("btn_"):
-        await inline_buttons_handler(update, context)
-        return
+    elif data == "btn_venta":
+        await query.answer()
+        await query.message.reply_text(
+            "💰 *REGISTRAR VENTA*\n\nIndica el *ID del pedido* o sus últimos 4-5 dígitos:\n\n_Ejemplo: 3162_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data["esperando_id_venta_inline"] = True
+
+    else:
+        await query.answer()
 
 
 # ============================================
@@ -958,33 +942,51 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
 
     texto = update.message.text
 
+    # 1. Respuesta rápida (vendido/devuelto)
     if update.message.reply_to_message:
         es_rapida = await detectar_respuesta_rapida(update, context)
         if es_rapida:
             return
 
+    # 2. Precio de venta rápida
     if context.user_data.get("esperando_precio_rapido"):
         await procesar_precio_rapido(update, context)
         return
 
+    # 3. ID de venta desde botón inline o teclado VENTA
     if context.user_data.get("esperando_id_venta_inline"):
         context.user_data.pop("esperando_id_venta_inline", None)
-        return await recibir_id_venta(update, context)
+        await recibir_id_venta(update, context)
+        return
 
+    # 4. Foto esperada desde botón inline
     if context.user_data.get("esperando_foto_compra"):
         await update.message.reply_text("❌ Envía una imagen, no texto")
         return
 
-    if texto == "📋 LISTAR":
-        await listar(update, context)
+    # 5. Teclado principal
+    if texto == "📸 COMPRA":
+        context.user_data["esperando_foto_compra"] = True
+        await update.message.reply_text(
+            "📸 *REGISTRAR COMPRA*\n\nEnvía la captura de pantalla del pedido.\n\nPara cancelar: /cancelar",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
         return
-    if texto == "❓ AYUDA":
-        await ayuda(update, context)
+
+    if texto == "💰 VENTA":
+        context.user_data["esperando_id_venta_inline"] = True
+        await update.message.reply_text(
+            "💰 *REGISTRAR VENTA*\n\nIndica el *ID del pedido* o sus últimos 4-5 dígitos:\n\n_Ejemplo: 114-3982452-1531462 o 3162_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
         return
 
     if texto == "📋 LISTAR":
         await listar(update, context)
         return
+
     if texto == "❓ AYUDA":
         await ayuda(update, context)
         return
@@ -1032,9 +1034,19 @@ async def post_init(application: Application):
 
 def main():
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+
     if not GOOGLE_CREDENTIALS_JSON:
         print("❌ ERROR: Falta GOOGLE_CREDENTIALS_JSON en Railway variables")
         return
+
+    if not TELEGRAM_TOKEN:
+        print("❌ ERROR: Falta TELEGRAM_TOKEN en Railway variables")
+        return
+
+    if not TU_CHAT_ID:
+        print("❌ ERROR: Falta TU_CHAT_ID en Railway variables")
+        return
+
     print("🤖 Bot Profesional v3.0")
     print(f"✅ Chat ID permitido: {TU_CHAT_ID}")
 
@@ -1053,7 +1065,6 @@ def main():
             CallbackQueryHandler(iniciar_compra, pattern="^btn_compra$"),
             MessageHandler(filters.Regex("^📸 COMPRA$"), iniciar_compra),
         ],
-
         states={
             ESPERANDO_COMPRA_FOTO: [
                 MessageHandler(filters.PHOTO & ~filters.COMMAND, procesar_compra)
@@ -1068,7 +1079,6 @@ def main():
             CallbackQueryHandler(iniciar_venta, pattern="^btn_venta$"),
             MessageHandler(filters.Regex("^💰 VENTA$"), iniciar_venta),
         ],
-
         states={
             ESPERANDO_VENTA_ID: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_venta)
@@ -1101,8 +1111,8 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
+
 
 
 
