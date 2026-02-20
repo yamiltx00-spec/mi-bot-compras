@@ -1017,6 +1017,15 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================
+# ERROR HANDLER
+# ============================================
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(f"Error: {context.error}")
+
+
+# ============================================
 # MAIN
 # ============================================
 
@@ -1045,6 +1054,10 @@ def main():
 
     if not TU_CHAT_ID:
         print("❌ ERROR: Falta TU_CHAT_ID en Railway variables")
+        return
+
+    if not GOOGLE_SHEETS_ID:
+        print("❌ ERROR: Falta GOOGLE_SHEETS_ID en Railway variables")
         return
 
     print("🤖 Bot Profesional v3.0")
@@ -1105,16 +1118,10 @@ def main():
     application.add_handler(CommandHandler(["cancelar", "can"], cancelar))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, manejar_foto))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje_texto))
-    application.add_error_handler(lambda update, context: logging.error(f"Error: {context.error}"))
+    application.add_error_handler(error_handler)
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
