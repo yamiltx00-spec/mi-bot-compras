@@ -1033,9 +1033,10 @@ async def post_init(application: Application):
 def main():
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        print("❌ ERROR: No se encontró archivo JSON de credenciales")
-        return
+if not GOOGLE_CREDENTIALS_JSON:
+    print("❌ ERROR: Falta GOOGLE_CREDENTIALS_JSON en Railway variables")
+    return
+
 
     print("🤖 Bot Profesional v3.0")
     print(f"✅ Chat ID permitido: {TU_CHAT_ID}")
@@ -1105,5 +1106,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
