@@ -1033,7 +1033,7 @@ async def post_init(application: Application):
 def main():
     logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-if not GOOGLE_CREDENTIALS_JSON:
+    if not GOOGLE_CREDENTIALS_JSON:
     print("❌ ERROR: Falta GOOGLE_CREDENTIALS_JSON en Railway variables")
     return
 
@@ -1106,6 +1106,7 @@ if not GOOGLE_CREDENTIALS_JSON:
 if __name__ == "__main__":
 
     main()
+
 
 
 
