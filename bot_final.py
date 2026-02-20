@@ -29,13 +29,12 @@ from googleapiclient.discovery import build
 # CONFIGURACIÓN
 # ============================================
 
-# IMPORTANTE: cuando verifiquemos que todo funciona,
-# CAMBIA estos valores por NUEVOS tokens/keys.
-TELEGRAM_TOKEN = "8512563679:AAHadahMDtIPfciUYXbz1c8FYBMZZx073So"
-GOOGLE_SHEETS_ID = "15vk6KXKC67Ia9Mw4ZXKoKJ0pH4ym9aOvoaNfgRLPrV8"
-GOOGLE_CREDENTIALS_FILE = "project-14949270-2d63-433f-8a1-8ae57442ed7c.json"
-GEMINI_API_KEY = "AIzaSyD_RwJl41TqsWa8IGr_EqkdAAIDmTsHn-0"
-TU_CHAT_ID = "19401650"  # tu chat ID
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TU_CHAT_ID = os.getenv("TU_CHAT_ID")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
 
 # ============================================
 # ESTADOS
@@ -1104,4 +1103,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
