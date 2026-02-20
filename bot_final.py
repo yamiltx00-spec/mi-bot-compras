@@ -124,16 +124,18 @@ async def reply(update: Update, texto: str, **kwargs):
 # GOOGLE SHEETS
 # ============================================
 
-
 def get_sheets_service():
     try:
         if not GOOGLE_CREDENTIALS_JSON:
             raise Exception("GOOGLE_CREDENTIALS_JSON no está definida")
-
         info = json.loads(GOOGLE_CREDENTIALS_JSON)
-        creds
-
-
+        creds = google.oauth2.service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        return build('sheets', 'v4', credentials=creds)
+    except Exception as e:
+        logging.error(f"Error Sheets service: {e}")
+        raise
 
 def agregar_compra(datos):
     try:
@@ -1103,4 +1105,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
