@@ -1312,7 +1312,7 @@ async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application):
     await application.bot.set_my_commands([
         BotCommand("start", "Iniciar bot"),
-        BusCommand("ayuda", "Ver ayuda y ejemplos"),
+        BotCommand("ayuda", "Ver ayuda y ejemplos"),
         BotCommand("listar", "Listar pendientes"),
         BotCommand("stats", "Ver estadísticas"),
     ])
@@ -1348,3 +1348,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
