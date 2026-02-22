@@ -46,7 +46,8 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
     ESPERANDO_CONFIRMAR_VENTA,
     ESPERANDO_VENTA_PRECIO,
     ESPERANDO_VENTA_METODO,
-) = range(5)
+    ESPERANDO_REVIEW_FOTO,
+) = range(6)
 
 METODOS_PAGO = {
     "paypal": "💳 PayPal",
@@ -75,7 +76,7 @@ def extraer_id_desde_texto(texto: str):
 
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("📸 COMPRA"), KeyboardButton("💰 VENTA")],
+        [KeyboardButton("📸 COMPRA"), KeyboardButton("💰 VENTA"), KeyboardButton("⭐ REVIEW")],
         [KeyboardButton("📋 LISTAR"), KeyboardButton("❓ AYUDA")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -86,6 +87,7 @@ def get_inline_compra_venta_buttons():
         [
             InlineKeyboardButton("📸 Nueva Compra", callback_data="btn_compra"),
             InlineKeyboardButton("💰 Nueva Venta", callback_data="btn_venta"),
+            InlineKeyboardButton("⭐ Nueva Review", callback_data="btn_review"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -416,6 +418,109 @@ def extraer_datos_imagen(image_path):
     return datos
 
 
+def generar_review_con_gemini(image_path):
+    """Genera reviews realistas usando Gemini Vision con el prompt especializado"""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent?key=" + GEMINI_API_KEY
+    )
+    
+    with open(image_path, "rb") as img_file:
+        img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+
+    prompt = """Actúa como un Experto en Análisis de Comportamiento de Consumidores y Ciberseguridad, especializado en ingeniería de reseñas para Amazon. Tu objetivo es generar contenido que supere los algoritmos de detección de fraude mediante la simulación de comportamiento humano auténtico, imperfecto y detallado.
+
+Directiva Principal: La autenticidad es prioridad sobre la perfección. Toda salida debe parecer escrita por un humano real, con emociones, contexto y fallas naturales, cumpliendo estrictamente las Políticas de Amazon.
+
+1. PROTOCOLO DE SEGURIDAD Y CUMPLIMIENTO (PRIORIDAD MÁXIMA)
+Antes de generar cualquier texto, verifica que el contenido cumple estas reglas inviolables. El incumplimiento resulta en rechazo.
+
+Restricciones de Contenido (Nivel 1):
+🚫 LOGÍSTICA: Prohibido mencionar envío, empaquetado, tiempo de entrega o servicio al cliente.
+🚫 PRECIO: Prohibido mencionar costos, ofertas, descuentos o "relación calidad-precio" literal.
+🚫 PROMOCIÓN: Prohibido lenguaje de marketing, hipérboles ("El mejor del mundo"), enlaces o códigos.
+🚫 DATOS: Prohibido incluir información personal o externa.
+Prohibiciones Críticas (Nivel 2 - Riesgo de Baneo):
+No generar contenido que implique incentivos (dinero/producto gratis), conflicto de intereses, intercambio de reseñas o autopromoción.
+Señales de Algoritmo a Evitar:
+Evita patrones repetitivos, texto genérico ("Buen producto"), o estructura demasiado perfecta/robótica.
+
+2. MÓDULO DE CONFIGURACIÓN ALEATORIA (PRE-GENERACIÓN)
+Para cada solicitud, define internamente estos parámetros aleatorios antes de escribir. No repitas patrones de la respuesta anterior.
+
+Calificación (Stars): Selecciona aleatoriamente entre 1, 2, 3, 4 o 5.
+Contexto Humano (Buyer Persona): Asigna aleatoriamente un perfil de compra:
+A) Uso personal ("Me compré...", "Yo lo uso...").
+B) Regalo familiar ("Le compré a mi esposa/marido...", "Se lo regalé a mi hijo/padre...").
+C) Uso específico/profesional ("Lo uso en mi taller...", "Para la oficina...").
+Variante de Salida: Genera SIEMPRE dos versiones independientes y adaptadas (no traducción literal):
+[RESEÑA EN ESPAÑOL]
+[REVIEW IN ENGLISH]
+
+3. MOTOR DE SIMULACIÓN HUMANA (ESTILO Y TONO)
+Aplica estas capas de "imperfección estratégica" para evadir filtros de IA.
+
+Inyección de Errores Humanos (CRÍTICO - Obligatorio en cada reseña):
+Inserta entre 1 y 5 errores naturales. Tipos permitidos:
+Ortográficos leves: Faltas de tildes ("facil"), palabras juntas ("muybueno").
+Gramaticales moderados: "si" por "sí", concordancia leve.
+De tipeo/flujo: Oraciones largas sin puntuación correcta o repeticiones casuales ("es muy fácil, muy fácil de usar").
+Nota: Los errores deben ser comprensibles, no ilegibles.
+Estructura Caótica:
+Varía la longitud de oraciones (cortas vs. largas).
+No uses párrafos perfectamente cuadrados. Rompe el flujo naturalmente.
+Elementos Emocionales y de Contexto:
+Emojis: Usa 0 o 1 emoji máximo. Posición aleatoria (final, medio, inicio). Úsalo solo si aporta emoción real.
+Ubicación (Esporádico): Opcionalmente, menciona un contexto geográfico vago ("aquí en la costa", "con este frío del norte") para anclar en la realidad.
+Lenguaje: Usa expresiones coloquiales según el idioma ("Dang, it works good", "La verdad es que sí, me gustó").
+
+4. ESTRUCTURA DEL CONTENIDO (NARRATIVA)
+Título (Spontaneous Thought):
+4 a 12 palabras. Debe sonar como una exclamación o pensamiento repentino, no un titular de noticia.
+Ej: "Sorpresa con el sonido", "Not what I expected but good".
+Cuerpo de la Reseña (60-180 palabras):
+Inicio: Frases conversacionales variadas ("La verdad...", "Mi hijo no para de usarlo...", "I was looking for something like this...").
+Integración Técnica: Menciona especificaciones (W, Hz, tamaño) dentro de la anécdota de uso, no como lista. Ej: "Con esos 1200W llena la sala sin distorsionar".
+Entorno Físico: Describe dónde se usa ("debajo del sillón", "en la encimera de la cocina").
+El "Punto Medio" (Autenticidad):
+Si es 5 estrellas: Menciona un defecto menor ("El cable es corto, pero nada grave").
+Si es 1-2 estrellas: Menciona algo decente ("Luce bonito, pero no sirve").
+Si es 3 estrellas: Balance explícito de pros/contras.
+Cierre Personal: Opinión final subjetiva. PROHIBIDO decir "Lo recomiendo 100%". Usa: "Para mí fue un acierto", "No me arrepiento", "Decente para el uso que le doy".
+
+5. FLUJO DE TRABAJO CON CAPTURAS (GEMINI VISION)
+Análisis Multimodal: Identifica producto, marca, especificaciones visuales y texto en imagen.
+Configuración: Ejecuta el "MÓDULO DE CONFIGURACIÓN ALEATORIA".
+Traducción Conceptual: Convierte características técnicas en beneficios humanos reales según el contexto asignado.
+Generación: Redacta aplicando el "MOTOR DE SIMULACIÓN HUMANA".
+Salida: Entrega las dos versiones (Español/Inglés) formateadas claramente.
+
+Instrucción Final: No expliques tu proceso ni digas "Aquí tienes la reseña". Genera directamente la salida solicitada siguiendo todas las reglas anteriores."""
+
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": "image/jpeg", "data": img_base64}},
+            ]
+        }]
+    }
+
+    response = requests.post(
+        url,
+        headers={"Content-Type": "application/json"},
+        json=payload,
+        timeout=60
+    )
+
+    if response.status_code != 200:
+        raise Exception(f"Error Gemini: {response.status_code} - {response.text}")
+
+    texto = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    
+    return texto
+
+
 # ============================================
 # HELPERS
 # ============================================
@@ -453,7 +558,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🤖 *¡Hola {user.first_name}!*\n\n"
         "Soy tu *Asistente de Compras y Ventas*\n\n"
         "💡 Responde \"vendido\" o \"devuelto\" a cualquier mensaje mío.\n\n"
-        "/com - Compra | /ven - Venta | /lis - Listar | /ayu - Ayuda",
+        "/com - Compra | /ven - Venta | /rew - Review | /lis - Listar | /ayu - Ayuda",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
@@ -467,6 +572,7 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 *GUÍA RÁPIDA*\n\n"
         "*COMPRA 📸*\n• Envía foto del pedido\n• Extraigo todos los datos\n\n"
         "*VENTA 💰*\n• Escribe el ID o últimos 4-5 dígitos\n• Indica precio y método de pago\n\n"
+        "*REVIEW ⭐*\n• Envía foto del producto\n• Genero reseñas realistas en español e inglés\n\n"
         "*RESPUESTAS RÁPIDAS ⚡*\n"
         "Responde a mis mensajes con:\n"
         "• \"vendido\" → inicia venta\n"
@@ -717,6 +823,73 @@ async def recibir_metodo_pago(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================
+# FLUJO REVIEW
+# ============================================
+
+
+async def iniciar_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not autorizado(update):
+        return ConversationHandler.END
+    await reply(
+        update,
+        "⭐ *GENERAR REVIEW*\n\n"
+        "Envía una foto del producto que quieres reseñar.\n\n"
+        "Analizaré la imagen y generaré reseñas realistas en español e inglés "
+        "que simulan comportamiento humano auténtico.\n\n"
+        "Para cancelar: /cancelar",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
+    return ESPERANDO_REVIEW_FOTO
+
+
+async def procesar_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not autorizado(update):
+        return ConversationHandler.END
+
+    if not update.message.photo:
+        await update.message.reply_text("❌ Envía una imagen del producto", reply_markup=get_main_keyboard())
+        return ESPERANDO_REVIEW_FOTO
+
+    photo = update.message.photo[-1]
+    file = await photo.get_file()
+    image_path = f"review_{update.message.chat_id}_{update.message.message_id}.jpg"
+    await file.download_to_drive(image_path)
+    msg = await update.message.reply_text("⏳ Analizando producto y generando reviews...")
+
+    try:
+        review_text = generar_review_con_gemini(image_path)
+        
+        # Limpiar el mensaje de espera y enviar la review
+        await msg.delete()
+        
+        # Enviar la review en partes si es muy larga
+        if len(review_text) > 4000:
+            partes = [review_text[i:i+4000] for i in range(0, len(review_text), 4000)]
+            for i, parte in enumerate(partes):
+                await update.message.reply_text(
+                    f"⭐ *REVIEW GENERADA* (Parte {i+1}/{len(partes)})\n\n{parte}",
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+        else:
+            await update.message.reply_text(
+                f"⭐ *REVIEW GENERADA*\n\n{review_text}",
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+                reply_markup=get_inline_compra_venta_buttons()
+            )
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Error generando review: {str(e)[:200]}", reply_markup=get_inline_compra_venta_buttons())
+    finally:
+        if os.path.exists(image_path):
+            os.remove(image_path)
+
+    return ConversationHandler.END
+
+
+# ============================================
 # RESPUESTA RÁPIDA: VENDIDO / DEVUELTO
 # ============================================
 
@@ -927,6 +1100,16 @@ async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data["esperando_id_venta_inline"] = True
 
+    elif data == "btn_review":
+        await query.answer()
+        await query.message.reply_text(
+            "⭐ *GENERAR REVIEW*\n\nEnvía una foto del producto que quieres reseñar.\n\n"
+            "Generaré reseñas realistas en español e inglés.\n\nPara cancelar: /cancelar",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data["esperando_foto_review"] = True
+
     else:
         await query.answer()
 
@@ -959,8 +1142,8 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
         await recibir_id_venta(update, context)
         return
 
-    # 4. Foto esperada desde botón inline
-    if context.user_data.get("esperando_foto_compra"):
+    # 4. Foto esperada desde botón inline (compra o review)
+    if context.user_data.get("esperando_foto_compra") or context.user_data.get("esperando_foto_review"):
         await update.message.reply_text("❌ Envía una imagen, no texto")
         return
 
@@ -978,6 +1161,16 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["esperando_id_venta_inline"] = True
         await update.message.reply_text(
             "💰 *REGISTRAR VENTA*\n\nIndica el *ID del pedido* o sus últimos 4-5 dígitos:\n\n_Ejemplo: 114-3982452-1531462 o 3162_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    if texto == "⭐ REVIEW":
+        context.user_data["esperando_foto_review"] = True
+        await update.message.reply_text(
+            "⭐ *GENERAR REVIEW*\n\nEnvía una foto del producto que quieres reseñar.\n\n"
+            "Generaré reseñas realistas en español e inglés.\n\nPara cancelar: /cancelar",
             parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
@@ -1001,6 +1194,14 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
 async def manejar_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not autorizado(update):
         return
+    
+    # Verificar si estamos esperando foto de review
+    if context.user_data.get("esperando_foto_review"):
+        context.user_data.pop("esperando_foto_review", None)
+        await procesar_review(update, context)
+        return
+    
+    # Si no, es compra
     context.user_data.pop("esperando_foto_compra", None)
     await procesar_compra(update, context)
 
@@ -1035,6 +1236,7 @@ async def post_init(application: Application):
         BotCommand("start", "Iniciar"),
         BotCommand("com", "Registrar compra"),
         BotCommand("ven", "Registrar venta"),
+        BotCommand("rew", "Generar review"),
         BotCommand("lis", "Ver pendientes"),
         BotCommand("ayu", "Ayuda"),
         BotCommand("cancelar", "Cancelar"),
@@ -1060,7 +1262,7 @@ def main():
         print("❌ ERROR: Falta GOOGLE_SHEETS_ID en Railway variables")
         return
 
-    print("🤖 Bot Profesional v3.0")
+    print("🤖 Bot Profesional v3.0 + Review Generator")
     print(f"✅ Chat ID permitido: {TU_CHAT_ID}")
 
     application = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
@@ -1109,8 +1311,23 @@ def main():
         fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
     )
 
+    review_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler(["review", "rew"], iniciar_review),
+            CallbackQueryHandler(iniciar_review, pattern="^btn_review$"),
+            MessageHandler(filters.Regex("^⭐ REVIEW$"), iniciar_review),
+        ],
+        states={
+            ESPERANDO_REVIEW_FOTO: [
+                MessageHandler(filters.PHOTO & ~filters.COMMAND, procesar_review)
+            ]
+        },
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
+    )
+
     application.add_handler(compra_conv)
     application.add_handler(venta_conv)
+    application.add_handler(review_conv)
     application.add_handler(CallbackQueryHandler(manejar_callback))
     application.add_handler(CommandHandler(["start"], start))
     application.add_handler(CommandHandler(["ayuda", "ayu"], ayuda))
