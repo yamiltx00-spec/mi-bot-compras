@@ -724,20 +724,31 @@ def estado_visual(fecha_devolucion_str: str) -> str:
         return "⚠️"
 
 
-# ✅ MEJORA: precompilado de patrones para es_mensaje_de_bot
+# Cualquier mensaje del bot que tenga un ID de pedido es suficiente para respuesta rápida.
+# Los patrones adicionales son secundarios — si hay ID, procesamos.
 _PATRONES_BOT = [
-    re.compile(r"✅ \d+ COMPRA\(S\) REGISTRADA\(S\)"),
-    re.compile(r"ID: \d{3}-\d{7}-\d{7}"),
-    re.compile(r"📦 .+"),
-    re.compile(r"💰 Total: \$"),
-    re.compile(r"⚠️ Devolución:"),
+    re.compile(r"\d{3}-\d{7}-\d{7}"),          # ID de pedido (patrón principal)
+    re.compile(r"COMPRA\(S\) REGISTRADA\(S\)"), # mensaje de compra
+    re.compile(r"VENTA REGISTRADA"),             # mensaje de venta
+    re.compile(r"VENTA RÁPIDA"),                 # mensaje venta rápida
+    re.compile(r"PENDIENTES"),                   # mensaje listar
+    re.compile(r"INVENTARIO COMPLETO"),          # mensaje inventario
+    re.compile(r"ALERTA"),                       # alerta diaria
+    re.compile(r"💰 Compra:"),                   # formato inventario/buscar
+    re.compile(r"⚠️ Devolución:"),              # formato compra registrada
+    re.compile(r"💰 Total: \$"),                 # formato compra registrada
 ]
 
 
 def es_mensaje_de_bot(texto: str) -> bool:
+    """Devuelve True si el texto parece un mensaje del bot (contiene ID o patrón conocido)."""
     if not texto:
         return False
-    return sum(1 for p in _PATRONES_BOT if p.search(texto)) >= 3
+    # Si tiene un ID de pedido válido, siempre es procesable
+    if re.search(r"\d{3}-\d{7}-\d{7}", texto):
+        return True
+    # Si no tiene ID, necesita al menos 2 patrones conocidos
+    return sum(1 for p in _PATRONES_BOT[1:] if p.search(texto)) >= 2
 
 
 def extraer_id_de_mensaje_bot(texto: str) -> Optional[str]:
@@ -767,7 +778,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🤖 *¡Hola {user.first_name}!*\n\n"
         "Soy tu *Asistente de Compras y Ventas*\n\n"
         "💡 Responde \"vendido\" o \"devuelto\" a cualquier mensaje mío.\n\n"
-        "/com - Compra | /ven - Venta | /rev - Review | /inv - Inventario | /ayu - Ayuda | /del - Eliminar",
+        "/com - Compra | /ven - Venta | /rev - Review | /inv - Inventario | /dev - Devuelto | /bus - Buscar | /ayu - Ayuda",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard(),
     )
@@ -785,7 +796,8 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*ELIMINAR 🗑️*\n• Escribe el ID a eliminar\n• Confirmación obligatoria antes de borrar\n\n"
         "*RESPUESTAS RÁPIDAS ⚡*\n"
         "Responde 'vendido' o 'devuelto' a cualquier mensaje del bot para actualizar\n\n"
-        "*INVENTARIO 📦*\n• Muestra TODOS los artículos\n• Estado: En stock / Vendido / Devuelto\n• Se envía en bloques si hay muchos items\n\n"
+        "*INVENTARIO 📦*\n• Muestra TODOS los artículos\n• Ordenado: vencidos → urgentes → stock → devueltos → vendidos\n• Se pagina automáticamente si hay muchos items\n\n"
+        "*BUSCAR 🔍*\n• `/bus auriculares` — busca por nombre\n• `/bus 3462` — busca por dígitos del ID\n• `/bus 114-xxx-xxx` — ID completo\n\n"
         "*ALERTAS 🔔*\nCada día a las 20:00 si hay productos por vencer",
         parse_mode="Markdown",
         reply_markup=get_inline_compra_venta_buttons(),
@@ -1531,9 +1543,94 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 
+
 # ============================================
-# BUSCAR PEDIDO (/bus o /buscar)
+# COMANDO /dev — MARCAR DEVUELTO DIRECTAMENTE
 # ============================================
+
+async def cmd_devuelto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not autorizado(update):
+        return
+
+    termino = " ".join(context.args).strip() if context.args else ""
+
+    if not termino:
+        await update.message.reply_text(
+            "🔄 *MARCAR COMO DEVUELTO*\n\n"
+            "Uso:\n"
+            "`/dev 3017` _(últimos dígitos del ID)_\n"
+            "`/dev 114-8566168-7193017` _(ID completo)_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    msg = await update.message.reply_text(f"🔄 Buscando *{termino}*...", parse_mode="Markdown")
+
+    # Buscar el pedido
+    compra = buscar_compra_por_id(termino)
+
+    # Resultado exacto
+    if isinstance(compra, Compra):
+        if compra.estado == "devuelto":
+            await msg.edit_text(f"⚠️ El pedido `{compra.id}` ya está marcado como devuelto.", parse_mode="Markdown")
+            return
+        if compra.estado == "vendido":
+            await msg.edit_text(f"⚠️ El pedido `{compra.id}` ya fue vendido, no se puede devolver.", parse_mode="Markdown")
+            return
+        if marcar_como_devuelto(compra.id):
+            await msg.edit_text(
+                f"✅ *DEVUELTO*\n\n"
+                f"🆔 `{compra.id}`\n"
+                f"📦 {compra.producto}\n"
+                f"💰 Compra: ${compra.precio_compra}\n\n"
+                f"Marcado como devuelto correctamente.",
+                parse_mode="Markdown",
+                reply_markup=get_inline_compra_venta_buttons(),
+            )
+        else:
+            await msg.edit_text("❌ Error al marcar como devuelto.")
+        return
+
+    # Múltiples coincidencias por sufijo
+    if isinstance(compra, list) and compra:
+        if len(compra) == 1:
+            c = compra[0]
+            if c.estado == "devuelto":
+                await msg.edit_text(f"⚠️ El pedido `{c.id}` ya está marcado como devuelto.", parse_mode="Markdown")
+                return
+            if c.estado == "vendido":
+                await msg.edit_text(f"⚠️ El pedido `{c.id}` ya fue vendido.", parse_mode="Markdown")
+                return
+            if marcar_como_devuelto(c.id):
+                await msg.edit_text(
+                    f"✅ *DEVUELTO*\n\n"
+                    f"🆔 `{c.id}`\n"
+                    f"📦 {c.producto}\n"
+                    f"💰 Compra: ${c.precio_compra}\n\n"
+                    f"Marcado como devuelto correctamente.",
+                    parse_mode="Markdown",
+                    reply_markup=get_inline_compra_venta_buttons(),
+                )
+            else:
+                await msg.edit_text("❌ Error al marcar como devuelto.")
+            return
+
+        # Más de uno → mostrar lista para que elija
+        lista = "🔍 *Varios pedidos encontrados, usa el ID completo:*\n\n"
+        for c in compra[:5]:
+            est = estado_visual(c.fecha_devolucion)
+            lista += f"• `{c.id}` — {c.producto[:25]}... | {est}\n"
+        await msg.edit_text(lista, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        return
+
+    await msg.edit_text(
+        f"❌ No encontré ningún pedido con *{termino}*\n\nUsa /bus para buscar.",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+    )
+
+
 
 async def buscar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not autorizado(update):
@@ -1734,12 +1831,30 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     texto = update.message.text
+    texto_lower = texto.lower().strip()
+
+    # ── Cancelar universal: "cancelar", "exit", "salir" ──────────────────────
+    if texto_lower in ("cancelar", "exit", "salir", "cancel"):
+        _limpiar_fotos_temporales(context)
+        context.user_data.clear()
+        await update.message.reply_text(
+            "❌ *Operación cancelada.*\n\nUsa los botones para continuar.",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard(),
+        )
+        return
 
     if update.message.reply_to_message:
         if await detectar_respuesta_rapida(update, context):
             return
 
     if context.user_data.get("esperando_precio_rapido"):
+        # Permitir cancelar también aquí
+        if texto_lower in ("cancelar", "exit", "salir", "cancel"):
+            _limpiar_fotos_temporales(context)
+            context.user_data.clear()
+            await update.message.reply_text("❌ Operación cancelada.", reply_markup=get_main_keyboard())
+            return
         await procesar_precio_rapido(update, context)
         return
 
@@ -1861,6 +1976,7 @@ async def post_init(application: Application) -> None:
         BotCommand("del", "Eliminar registro"),
         BotCommand("inv", "Ver inventario completo"),
         BotCommand("bus", "Buscar pedido por nombre o ID"),
+        BotCommand("dev", "Marcar pedido como devuelto"),
         BotCommand("ayu", "Ayuda"),
         BotCommand("cancelar", "Cancelar"),
     ])
@@ -1890,6 +2006,12 @@ def main() -> None:
         days=(0, 1, 2, 3, 4, 5, 6),
     )
 
+    # Handler de cancelar por texto libre (funciona dentro de conversaciones)
+    cancelar_texto_handler = MessageHandler(
+        filters.Regex(r"^(?i)(cancelar|exit|salir|cancel)$") & ~filters.COMMAND,
+        cancelar,
+    )
+
     compra_conv = ConversationHandler(
         entry_points=[
             CommandHandler(["compra", "com"], iniciar_compra),
@@ -1898,10 +2020,11 @@ def main() -> None:
         ],
         states={
             ESPERANDO_COMPRA_FOTO: [
-                MessageHandler(filters.PHOTO & ~filters.COMMAND, procesar_compra)
+                MessageHandler(filters.PHOTO & ~filters.COMMAND, procesar_compra),
+                cancelar_texto_handler,
             ]
         },
-        fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
     )
 
     venta_conv = ConversationHandler(
@@ -1912,19 +2035,19 @@ def main() -> None:
         ],
         states={
             ESPERANDO_VENTA_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_venta)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_venta),
             ],
             ESPERANDO_CONFIRMAR_VENTA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_venta_por_sufijo)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_venta_por_sufijo),
             ],
             ESPERANDO_VENTA_PRECIO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_precio_venta)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_precio_venta),
             ],
             ESPERANDO_VENTA_METODO: [
-                CallbackQueryHandler(recibir_metodo_pago, pattern="^metodo_")
+                CallbackQueryHandler(recibir_metodo_pago, pattern="^metodo_"),
             ],
         },
-        fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
     )
 
     review_conv = ConversationHandler(
@@ -1937,18 +2060,19 @@ def main() -> None:
             ESPERANDO_REVIEW_FOTOS: [
                 MessageHandler(filters.PHOTO & ~filters.COMMAND, procesar_foto_review),
                 CallbackQueryHandler(manejar_callback_review, pattern="^review_"),
+                cancelar_texto_handler,
             ],
             ESPERANDO_REVIEW_PRODUCTO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_nombre_producto_review)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_nombre_producto_review),
             ],
             ESPERANDO_REVIEW_ESTRELLAS: [
-                CallbackQueryHandler(recibir_estrellas_review, pattern="^star_")
+                CallbackQueryHandler(recibir_estrellas_review, pattern="^star_"),
             ],
             ESPERANDO_REVIEW_USO: [
-                CallbackQueryHandler(recibir_uso_review, pattern="^uso_")
+                CallbackQueryHandler(recibir_uso_review, pattern="^uso_"),
             ],
         },
-        fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
     )
 
     eliminar_conv = ConversationHandler(
@@ -1958,13 +2082,13 @@ def main() -> None:
         ],
         states={
             ESPERANDO_ID_ELIMINAR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_eliminar)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_eliminar),
             ],
             ESPERANDO_CONFIRMAR_ELIMINAR: [
-                CallbackQueryHandler(confirmar_eliminar, pattern="^(confirm_del_|cancel_del)")
+                CallbackQueryHandler(confirmar_eliminar, pattern="^(confirm_del_|cancel_del)"),
             ],
         },
-        fallbacks=[CommandHandler(["cancelar", "can"], cancelar)],
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
     )
 
     application.add_handler(compra_conv)
@@ -1976,6 +2100,7 @@ def main() -> None:
     application.add_handler(CommandHandler(["ayuda", "ayu"], ayuda))
     application.add_handler(CommandHandler(["inventario", "inv", "lis"], inventario))
     application.add_handler(CommandHandler(["buscar", "bus"], buscar_pedido))
+    application.add_handler(CommandHandler(["devuelto", "dev"], cmd_devuelto))
     application.add_handler(CommandHandler(["cancelar", "can"], cancelar))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, manejar_foto))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje_texto))
