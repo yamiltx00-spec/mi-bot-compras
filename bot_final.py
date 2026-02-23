@@ -73,7 +73,7 @@ METODOS_PAGO: dict[str, str] = {
 ID_COMPLETO_RE = re.compile(r"^\d{3}-\d{7}-\d{7}$")
 ID_RE = re.compile(r"ID:\s*([0-9]{3}-[0-9]{7}-[0-9]{7})")
 
-MENU_BOTONES = {"📸 COMPRA", "💰 VENTA", "📝 REVIEW", "🗑️ ELIMINAR", "📋 LISTAR", "❓ AYUDA"}
+MENU_BOTONES = {"📸 COMPRA", "💰 VENTA", "📝 REVIEW", "🗑️ ELIMINAR", "📦 INVENTARIO", "❓ AYUDA"}
 
 
 def extraer_id_desde_texto(texto: str) -> Optional[str]:
@@ -138,7 +138,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton("📸 COMPRA"), KeyboardButton("💰 VENTA")],
         [KeyboardButton("📝 REVIEW"), KeyboardButton("🗑️ ELIMINAR")],
-        [KeyboardButton("📋 LISTAR"), KeyboardButton("❓ AYUDA")],
+        [KeyboardButton("📦 INVENTARIO"), KeyboardButton("❓ AYUDA")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -408,6 +408,32 @@ def obtener_compras_pendientes() -> list[dict]:
         return pendientes
     except Exception as e:
         logger.error(f"Error obtener pendientes: {e}")
+        return []
+
+
+def obtener_todo_inventario() -> list[dict]:
+    """Retorna TODOS los artículos con su estado para el inventario completo."""
+    try:
+        rows = _get_all_rows()
+        items = []
+        for i, row in enumerate(rows[1:], 1):
+            if not row:
+                continue
+            estado = row[8] if len(row) > 8 and row[8] else "pendiente"
+            items.append({
+                "fila": i + 1,
+                "id": row[0] if len(row) > 0 else "N/A",
+                "fecha_compra": row[1] if len(row) > 1 else "N/A",
+                "producto": row[2] if len(row) > 2 else "N/A",
+                "precio_compra": row[3] if len(row) > 3 else "N/A",
+                "precio_venta": row[6] if len(row) > 6 else "",
+                "fecha_devolucion": row[4] if len(row) > 4 else "N/A",
+                "metodo_pago": row[7] if len(row) > 7 else "",
+                "estado": estado,
+            })
+        return items
+    except Exception as e:
+        logger.error(f"Error obtener inventario: {e}")
         return []
 
 
@@ -715,7 +741,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🤖 *¡Hola {user.first_name}!*\n\n"
         "Soy tu *Asistente de Compras y Ventas*\n\n"
         "💡 Responde \"vendido\" o \"devuelto\" a cualquier mensaje mío.\n\n"
-        "/com - Compra | /ven - Venta | /rev - Review | /lis - Listar | /ayu - Ayuda | /del - Eliminar",
+        "/com - Compra | /ven - Venta | /rev - Review | /inv - Inventario | /ayu - Ayuda | /del - Eliminar",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard(),
     )
@@ -733,6 +759,7 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*ELIMINAR 🗑️*\n• Escribe el ID a eliminar\n• Confirmación obligatoria antes de borrar\n\n"
         "*RESPUESTAS RÁPIDAS ⚡*\n"
         "Responde 'vendido' o 'devuelto' a cualquier mensaje del bot para actualizar\n\n"
+        "*INVENTARIO 📦*\n• Muestra TODOS los artículos\n• Estado: En stock / Vendido / Devuelto\n• Se envía en bloques si hay muchos items\n\n"
         "*ALERTAS 🔔*\nCada día a las 20:00 si hay productos por vencer",
         parse_mode="Markdown",
         reply_markup=get_inline_compra_venta_buttons(),
@@ -1395,32 +1422,86 @@ async def procesar_metodo_rapido(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # ============================================
-# LISTAR
+# INVENTARIO
 # ============================================
 
-async def listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not autorizado(update):
         return
-    await reply(update, "📋 Buscando...")
-    pendientes = obtener_compras_pendientes()
+    await reply(update, "📦 Cargando inventario...")
+    items = obtener_todo_inventario()
 
-    if not pendientes:
-        await reply(update, "📭 No hay compras pendientes 🎉", reply_markup=get_inline_compra_venta_buttons())
+    if not items:
+        await reply(update, "📭 No hay artículos registrados.", reply_markup=get_inline_compra_venta_buttons())
         return
 
-    mensaje = "📋 *PENDIENTES*\n\n"
-    for item in pendientes[:10]:
-        est = estado_visual(item.get("fecha_devolucion", ""))
-        mensaje += (
-            f"ID: {item['id']}\n"
-            f"📦 {item['producto']}\n"
-            f"💰 ${item['precio']} | {est}\n\n"
-        )
-    if len(pendientes) > 10:
-        mensaje += f"...y {len(pendientes) - 10} más\n"
-    mensaje += "\n💡 Responde 'vendido' o 'devuelto' a cualquier mensaje para actualizar"
+    # Contadores para el resumen
+    en_stock = [i for i in items if i["estado"] not in ("vendido", "devuelto")]
+    vendidos  = [i for i in items if i["estado"] == "vendido"]
+    devueltos = [i for i in items if i["estado"] == "devuelto"]
 
-    await reply(update, mensaje, parse_mode="Markdown", reply_markup=get_inline_compra_venta_buttons())
+    LIMITE = 3800  # margen seguro bajo el límite de 4096 de Telegram
+    chat_id = update.effective_chat.id
+
+    # ── Construir cada entrada COMPLETA primero ──────────────────────────────
+    entradas: list[str] = []
+    for item in items:
+        estado = item["estado"]
+
+        if estado == "vendido":
+            detalle = f"💵 Vendido: ${item['precio_venta']}" if item.get("precio_venta") else ""
+            metodo  = f"  •  {item['metodo_pago']}" if item.get("metodo_pago") else ""
+            estado_badge = f"✅  *VENDIDO*{('  —  ' + detalle + metodo) if detalle else ''}"
+        elif estado == "devuelto":
+            estado_badge = "🔄  *DEVUELTO*"
+        else:
+            est = estado_visual(item.get("fecha_devolucion", ""))
+            estado_badge = f"🟢  *EN STOCK*  —  Dev: {est}"
+
+        entradas.append(
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{item['id']}`\n"
+            f"│ 📦 {item['producto']}\n"
+            f"│ 💰 Compra: ${item['precio_compra']}\n"
+            f"│ {estado_badge}\n"
+            f"└─────────────────────────\n"
+        )
+
+    # ── Encabezado del primer mensaje ────────────────────────────────────────
+    encabezado = (
+        f"📦 *INVENTARIO COMPLETO*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🟢 Stock: *{len(en_stock)}*   ✅ Vendidos: *{len(vendidos)}*   🔄 Devueltos: *{len(devueltos)}*\n"
+        f"📊 Total: *{len(items)} artículos*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+
+    # ── Empaquetar entradas en bloques SIN partir ninguna a la mitad ─────────
+    bloques: list[str] = []
+    bloque_actual = encabezado
+
+    for entrada in entradas:
+        # Si agregar esta entrada completa supera el límite → cerrar bloque
+        if len(bloque_actual) + len(entrada) > LIMITE:
+            bloques.append(bloque_actual.rstrip())
+            bloque_actual = entrada          # nueva entrada inicia nuevo bloque
+        else:
+            bloque_actual += entrada
+
+    if bloque_actual.strip():
+        bloques.append(bloque_actual.rstrip())
+
+    # ── Enviar bloques ────────────────────────────────────────────────────────
+    total_bloques = len(bloques)
+    for idx, bloque in enumerate(bloques, 1):
+        pie = f"\n\n📄 Página {idx}/{total_bloques}" if total_bloques > 1 else ""
+        markup = get_inline_compra_venta_buttons() if idx == total_bloques else None
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=bloque + pie,
+            parse_mode="Markdown",
+            reply_markup=markup,
+        )
 
 
 # ============================================
@@ -1575,9 +1656,9 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
         await iniciar_eliminar(update, context)
         return
 
-    if texto == "📋 LISTAR":
+    if texto == "📦 INVENTARIO":
         context.user_data.clear()
-        await listar(update, context)
+        await inventario(update, context)
         return
 
     if texto == "❓ AYUDA":
@@ -1637,7 +1718,7 @@ async def post_init(application: Application) -> None:
         BotCommand("ven", "Registrar venta"),
         BotCommand("rev", "Generar review"),
         BotCommand("del", "Eliminar registro"),
-        BotCommand("lis", "Ver pendientes"),
+        BotCommand("inv", "Ver inventario completo"),
         BotCommand("ayu", "Ayuda"),
         BotCommand("cancelar", "Cancelar"),
     ])
@@ -1751,7 +1832,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(manejar_callback))
     application.add_handler(CommandHandler(["start"], start))
     application.add_handler(CommandHandler(["ayuda", "ayu"], ayuda))
-    application.add_handler(CommandHandler(["listar", "lis"], listar))
+    application.add_handler(CommandHandler(["inventario", "inv", "lis"], inventario))
     application.add_handler(CommandHandler(["cancelar", "can"], cancelar))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, manejar_foto))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje_texto))
