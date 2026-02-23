@@ -2008,7 +2008,7 @@ def main() -> None:
 
     # Handler de cancelar por texto libre (funciona dentro de conversaciones)
     cancelar_texto_handler = MessageHandler(
-        filters.Regex(r"^(?i)(cancelar|exit|salir|cancel)$") & ~filters.COMMAND,
+        filters.Regex(re.compile(r"^(cancelar|exit|salir|cancel)$", re.IGNORECASE)) & ~filters.COMMAND,
         cancelar,
     )
 
