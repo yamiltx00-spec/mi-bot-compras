@@ -412,7 +412,12 @@ def obtener_compras_pendientes() -> list[dict]:
 
 
 def obtener_todo_inventario() -> list[dict]:
-    """Retorna TODOS los artículos con su estado para el inventario completo."""
+    """
+    Retorna TODOS los artículos ordenados por prioridad de devolución:
+    1. En stock: vencidos primero → urgentes → más días restantes
+    2. Devueltos (al final, ordenados por fecha)
+    3. Vendidos (al final del todo)
+    """
     try:
         rows = _get_all_rows()
         items = []
@@ -420,6 +425,15 @@ def obtener_todo_inventario() -> list[dict]:
             if not row:
                 continue
             estado = row[8] if len(row) > 8 and row[8] else "pendiente"
+            fecha_dev_str = row[4] if len(row) > 4 else ""
+
+            # Calcular días restantes para ordenar
+            try:
+                fecha_dev = datetime.strptime(fecha_dev_str, "%d/%m/%Y")
+                dias_restantes = (fecha_dev - datetime.now()).days
+            except Exception:
+                dias_restantes = 9999  # sin fecha → va al fondo del grupo
+
             items.append({
                 "fila": i + 1,
                 "id": row[0] if len(row) > 0 else "N/A",
@@ -427,10 +441,22 @@ def obtener_todo_inventario() -> list[dict]:
                 "producto": row[2] if len(row) > 2 else "N/A",
                 "precio_compra": row[3] if len(row) > 3 else "N/A",
                 "precio_venta": row[6] if len(row) > 6 else "",
-                "fecha_devolucion": row[4] if len(row) > 4 else "N/A",
+                "fecha_devolucion": fecha_dev_str,
                 "metodo_pago": row[7] if len(row) > 7 else "",
                 "estado": estado,
+                "_dias": dias_restantes,
             })
+
+        def _sort_key(item):
+            estado = item["estado"]
+            dias   = item["_dias"]
+            if estado not in ("vendido", "devuelto"):
+                return (0, dias)   # en stock: ordenar por días (negativos = vencidos, van primero)
+            if estado == "devuelto":
+                return (1, dias)   # devueltos después
+            return (2, dias)       # vendidos al final
+
+        items.sort(key=_sort_key)
         return items
     except Exception as e:
         logger.error(f"Error obtener inventario: {e}")
@@ -1504,9 +1530,124 @@ async def inventario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
+
 # ============================================
-# ALERTAS
+# BUSCAR PEDIDO (/bus o /buscar)
 # ============================================
+
+async def buscar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not autorizado(update):
+        return
+
+    # Obtener el término de búsqueda de los argumentos del comando
+    termino = " ".join(context.args).strip() if context.args else ""
+
+    if not termino:
+        await update.message.reply_text(
+            "🔍 *BUSCAR PEDIDO*\n\n"
+            "Uso:\n"
+            "`/bus nombre del producto`\n"
+            "`/bus 3462` _(últimos dígitos del ID)_\n"
+            "`/bus 114-3982452-1531462` _(ID completo)_\n\n"
+            "_Ejemplo: /bus auriculares_",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard(),
+        )
+        return
+
+    msg = await update.message.reply_text(f"🔍 Buscando *{termino}*...", parse_mode="Markdown")
+
+    try:
+        rows = _get_all_rows()
+        termino_lower = termino.lower()
+        es_id_completo = bool(ID_COMPLETO_RE.match(termino))
+        resultados: list[dict] = []
+
+        for i, row in enumerate(rows[1:], 1):
+            if not row:
+                continue
+            id_pedido  = row[0] if len(row) > 0 else ""
+            producto   = row[2] if len(row) > 2 else ""
+            estado     = row[8] if len(row) > 8 and row[8] else "pendiente"
+
+            coincide = False
+            if es_id_completo:
+                coincide = id_pedido == termino
+            elif termino.isdigit():
+                # Búsqueda por sufijo numérico del ID
+                coincide = id_pedido.endswith(termino)
+            else:
+                # Búsqueda por nombre (parcial, insensible a mayúsculas)
+                coincide = termino_lower in producto.lower()
+
+            if coincide:
+                try:
+                    fecha_dev = datetime.strptime(row[4], "%d/%m/%Y") if len(row) > 4 and row[4] else None
+                    dias = (fecha_dev - datetime.now()).days if fecha_dev else 9999
+                except Exception:
+                    dias = 9999
+
+                resultados.append({
+                    "id": id_pedido,
+                    "producto": producto,
+                    "precio_compra": row[3] if len(row) > 3 else "N/A",
+                    "precio_venta": row[6] if len(row) > 6 else "",
+                    "fecha_compra": row[1] if len(row) > 1 else "N/A",
+                    "fecha_devolucion": row[4] if len(row) > 4 else "N/A",
+                    "metodo_pago": row[7] if len(row) > 7 else "",
+                    "estado": estado,
+                    "_dias": dias,
+                })
+
+        if not resultados:
+            await msg.edit_text(
+                f"❌ No se encontró ningún pedido con *{termino}*\n\n"
+                "Prueba con otro nombre o parte del ID.",
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard(),
+            )
+            return
+
+        # Encabezado
+        texto = (
+            f"🔍 *RESULTADOS — \"{termino}\"*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 {len(resultados)} resultado(s) encontrado(s)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+
+        for item in resultados:
+            estado = item["estado"]
+            if estado == "vendido":
+                detalle = f"💵 Vendido: ${item['precio_venta']}" if item.get("precio_venta") else ""
+                metodo  = f"  •  {item['metodo_pago']}" if item.get("metodo_pago") else ""
+                badge   = f"✅  *VENDIDO*{('  —  ' + detalle + metodo) if detalle else ''}"
+            elif estado == "devuelto":
+                badge = "🔄  *DEVUELTO*"
+            else:
+                est   = estado_visual(item.get("fecha_devolucion", ""))
+                badge = f"🟢  *EN STOCK*  —  Dev: {est}"
+
+            texto += (
+                f"┌─────────────────────────\n"
+                f"│ 🆔 `{item['id']}`\n"
+                f"│ 📦 {item['producto']}\n"
+                f"│ 💰 Compra: ${item['precio_compra']}\n"
+                f"│ {badge}\n"
+                f"└─────────────────────────\n"
+            )
+
+        await msg.edit_text(
+            texto,
+            parse_mode="Markdown",
+            reply_markup=get_inline_compra_venta_buttons(),
+        )
+
+    except Exception as e:
+        logger.error(f"Error buscar_pedido: {e}")
+        await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=get_main_keyboard())
+
+
 
 async def alerta_diaria(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -1719,6 +1860,7 @@ async def post_init(application: Application) -> None:
         BotCommand("rev", "Generar review"),
         BotCommand("del", "Eliminar registro"),
         BotCommand("inv", "Ver inventario completo"),
+        BotCommand("bus", "Buscar pedido por nombre o ID"),
         BotCommand("ayu", "Ayuda"),
         BotCommand("cancelar", "Cancelar"),
     ])
@@ -1833,6 +1975,7 @@ def main() -> None:
     application.add_handler(CommandHandler(["start"], start))
     application.add_handler(CommandHandler(["ayuda", "ayu"], ayuda))
     application.add_handler(CommandHandler(["inventario", "inv", "lis"], inventario))
+    application.add_handler(CommandHandler(["buscar", "bus"], buscar_pedido))
     application.add_handler(CommandHandler(["cancelar", "can"], cancelar))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, manejar_foto))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje_texto))
