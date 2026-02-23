@@ -918,14 +918,24 @@ async def recibir_id_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return ConversationHandler.END
 
+        # ── Confirmación antes de proceder ───────────────────────────────────
+        est = estado_visual(compra.fecha_devolucion)
         context.user_data["venta_id"] = compra.id
         context.user_data["compra_info"] = compra.to_dict()
         await update.message.reply_text(
-            f"✅ *Producto:* {compra.producto}\n"
-            f"💰 *Precio compra:* ${compra.precio_compra}\n\n"
-            "¿A qué *precio vendiste*?",
+            f"⚠️ *CONFIRMAR VENTA*\n\n"
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{compra.id}`\n"
+            f"│ 📦 {compra.producto}\n"
+            f"│ 💰 Precio compra: ${compra.precio_compra}\n"
+            f"│ 📅 Devolución: {est}\n"
+            f"└─────────────────────────\n\n"
+            f"¿Confirmas que quieres *vender* este artículo?",
             parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sí, vender", callback_data=f"confirm_ven_{compra.id}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="cancel_ven"),
+            ]]),
         )
         return ESPERANDO_VENTA_PRECIO
 
@@ -992,6 +1002,35 @@ async def confirmar_venta_por_sufijo(update: Update, context: ContextTypes.DEFAU
         reply_markup=get_main_keyboard(),
     )
     return ESPERANDO_CONFIRMAR_VENTA
+
+
+async def confirmar_inicio_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja la confirmación inline antes de pedir el precio de venta."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancel_ven":
+        context.user_data.clear()
+        await query.edit_message_text("❌ Venta cancelada.")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="¿Siguiente acción?",
+            reply_markup=get_inline_compra_venta_buttons(),
+        )
+        return ConversationHandler.END
+
+    if query.data.startswith("confirm_ven_"):
+        compra_info = context.user_data.get("compra_info", {})
+        await query.edit_message_text(
+            f"✅ *Venta confirmada*\n\n"
+            f"📦 {compra_info.get('producto', 'N/A')}\n"
+            f"💰 Precio compra: ${compra_info.get('precio_compra', '0')}\n\n"
+            f"¿A qué *precio vendiste*?",
+            parse_mode="Markdown",
+        )
+        return ESPERANDO_VENTA_PRECIO
+
+    return ESPERANDO_VENTA_PRECIO
 
 
 async def recibir_precio_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1377,14 +1416,33 @@ async def detectar_respuesta_rapida(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("❌ No pude identificar el ID del pedido en el mensaje.")
             return True
 
-        if marcar_como_devuelto(id_pedido):
-            await update.message.reply_text(
-                f"✅ *DEVUELTO*\n\nID: {id_pedido}\nMarcado como devuelto correctamente.",
-                parse_mode="Markdown",
-                reply_markup=get_inline_compra_venta_buttons(),
-            )
-        else:
-            await update.message.reply_text("❌ Error al marcar como devuelto.")
+        compra = buscar_compra_por_id_exacto(id_pedido)
+        if not compra:
+            await update.message.reply_text("❌ Pedido no encontrado en la base de datos.")
+            return True
+        if compra.estado == "devuelto":
+            await update.message.reply_text("⚠️ Este pedido ya está marcado como devuelto.")
+            return True
+        if compra.estado == "vendido":
+            await update.message.reply_text("⚠️ Este pedido ya fue vendido, no se puede devolver.")
+            return True
+
+        est = estado_visual(compra.fecha_devolucion)
+        await update.message.reply_text(
+            f"⚠️ *CONFIRMAR DEVOLUCIÓN*\n\n"
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{id_pedido}`\n"
+            f"│ 📦 {compra.producto}\n"
+            f"│ 💰 Compra: ${compra.precio_compra}\n"
+            f"│ 📅 Devolución: {est}\n"
+            f"└─────────────────────────\n\n"
+            f"¿Confirmas que quieres marcar este artículo como *devuelto*?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sí, devolver", callback_data=f"confirm_dev_rapido_{id_pedido}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="cancel_dev_rapido"),
+            ]]),
+        )
         return True
 
     return False
@@ -1578,18 +1636,22 @@ async def cmd_devuelto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if compra.estado == "vendido":
             await msg.edit_text(f"⚠️ El pedido `{compra.id}` ya fue vendido, no se puede devolver.", parse_mode="Markdown")
             return
-        if marcar_como_devuelto(compra.id):
-            await msg.edit_text(
-                f"✅ *DEVUELTO*\n\n"
-                f"🆔 `{compra.id}`\n"
-                f"📦 {compra.producto}\n"
-                f"💰 Compra: ${compra.precio_compra}\n\n"
-                f"Marcado como devuelto correctamente.",
-                parse_mode="Markdown",
-                reply_markup=get_inline_compra_venta_buttons(),
-            )
-        else:
-            await msg.edit_text("❌ Error al marcar como devuelto.")
+        est = estado_visual(compra.fecha_devolucion)
+        await msg.edit_text(
+            f"⚠️ *CONFIRMAR DEVOLUCIÓN*\n\n"
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{compra.id}`\n"
+            f"│ 📦 {compra.producto}\n"
+            f"│ 💰 Precio compra: ${compra.precio_compra}\n"
+            f"│ 📅 Devolución: {est}\n"
+            f"└─────────────────────────\n\n"
+            f"¿Confirmas que quieres marcar este artículo como *devuelto*?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sí, devolver", callback_data=f"confirm_dev_{compra.id}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="cancel_dev"),
+            ]]),
+        )
         return
 
     # Múltiples coincidencias por sufijo
@@ -1788,6 +1850,52 @@ async def manejar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if context.user_data.get("esperando_metodo_rapido") and data.startswith("metodo_"):
         if await procesar_metodo_rapido(update, context):
             return
+
+    # ── Confirmación de devolución desde /dev ────────────────────────────────
+    if data == "cancel_dev":
+        await query.answer()
+        await query.edit_message_text("❌ Devolución cancelada.")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="¿Siguiente acción?",
+            reply_markup=get_inline_compra_venta_buttons(),
+        )
+        return
+
+    if data.startswith("confirm_dev_"):
+        await query.answer()
+        id_pedido = data.replace("confirm_dev_", "")
+        if marcar_como_devuelto(id_pedido):
+            await query.edit_message_text(
+                f"✅ *DEVUELTO*\n\n"
+                f"🆔 `{id_pedido}`\n"
+                f"Marcado como devuelto correctamente.",
+                parse_mode="Markdown",
+                reply_markup=get_inline_compra_venta_buttons(),
+            )
+        else:
+            await query.edit_message_text("❌ Error al marcar como devuelto.")
+        return
+
+    # ── Confirmación de devolución desde reply rápido ────────────────────────
+    if data == "cancel_dev_rapido":
+        await query.answer()
+        context.user_data.pop("devolucion_rapida_id", None)
+        await query.edit_message_text("❌ Devolución cancelada.")
+        return
+
+    if data.startswith("confirm_dev_rapido_"):
+        await query.answer()
+        id_pedido = data.replace("confirm_dev_rapido_", "")
+        if marcar_como_devuelto(id_pedido):
+            await query.edit_message_text(
+                f"✅ *DEVUELTO*\n\n🆔 `{id_pedido}`\nMarcado como devuelto correctamente.",
+                parse_mode="Markdown",
+                reply_markup=get_inline_compra_venta_buttons(),
+            )
+        else:
+            await query.edit_message_text("❌ Error al marcar como devuelto.")
+        return
 
     if data == "btn_compra":
         await query.answer()
@@ -2041,6 +2149,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_venta_por_sufijo),
             ],
             ESPERANDO_VENTA_PRECIO: [
+                CallbackQueryHandler(confirmar_inicio_venta, pattern="^(confirm_ven_|cancel_ven)"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_precio_venta),
             ],
             ESPERANDO_VENTA_METODO: [
