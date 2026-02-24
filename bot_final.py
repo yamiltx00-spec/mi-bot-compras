@@ -972,6 +972,15 @@ async def confirmar_venta_por_sufijo(update: Update, context: ContextTypes.DEFAU
     if not autorizado(update):
         return ConversationHandler.END
 
+    # Seguridad: si llega un mensaje de texto en vez de callback, ignorar con aviso
+    if not update.callback_query:
+        if update.message:
+            await update.message.reply_text(
+                "👆 Por favor usa los botones de arriba para confirmar.",
+                reply_markup=get_main_keyboard(),
+            )
+        return ESPERANDO_CONFIRMAR_VENTA
+
     query = update.callback_query
     await query.answer()
 
@@ -1015,6 +1024,11 @@ async def confirmar_venta_por_sufijo(update: Update, context: ContextTypes.DEFAU
 
 async def confirmar_inicio_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Maneja la confirmación inline antes de pedir el precio de venta."""
+    if not update.callback_query:
+        if update.message:
+            await update.message.reply_text("👆 Usa los botones para confirmar.")
+        return ESPERANDO_VENTA_PRECIO
+
     query = update.callback_query
     await query.answer()
 
@@ -2114,7 +2128,9 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ============================================
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    import traceback
     logger.error(f"Error: {context.error}")
+    logger.error("".join(traceback.format_exception(type(context.error), context.error, context.error.__traceback__)))
 
 
 # ============================================
