@@ -59,7 +59,8 @@ logger = logging.getLogger(__name__)
     ESPERANDO_REVIEW_USO,
     ESPERANDO_CONFIRMAR_ELIMINAR,
     ESPERANDO_ID_ELIMINAR,
-) = range(11)
+    ESPERANDO_BUSCAR,
+) = range(12)
 
 METODOS_PAGO: dict[str, str] = {
     "paypal": "💳 PayPal",
@@ -944,13 +945,18 @@ async def recibir_id_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data["venta_candidato"] = candidato.to_dict()
         est = estado_visual(candidato.fecha_devolucion)
         await update.message.reply_text(
-            "¿Es este el pedido?\n\n"
-            f"ID: {candidato.id}\n"
-            f"📦 {candidato.producto}\n"
-            f"💰 ${candidato.precio_compra} | {est}\n\n"
-            "Responde *s* para sí o *n* para no.",
+            f"🔍 *¿Es este el pedido?*\n\n"
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{candidato.id}`\n"
+            f"│ 📦 {candidato.producto}\n"
+            f"│ 💰 Compra: ${candidato.precio_compra}\n"
+            f"│ 📅 Devolución: {est}\n"
+            f"└─────────────────────────",
             parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sí, este es", callback_data="ven_candidato_si"),
+                InlineKeyboardButton("❌ No, otro", callback_data="ven_candidato_no"),
+            ]]),
         )
         return ESPERANDO_CONFIRMAR_VENTA
 
@@ -962,45 +968,48 @@ async def recibir_id_venta(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def confirmar_venta_por_sufijo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Maneja los botones Sí/No del candidato de venta por sufijo."""
     if not autorizado(update):
         return ConversationHandler.END
 
-    texto = update.message.text.strip().lower()
-
-    if texto.upper() in MENU_BOTONES or update.message.text.strip() in MENU_BOTONES:
-        context.user_data.clear()
-        await manejar_mensaje_texto(update, context)
-        return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
 
     compra_dict = context.user_data.get("venta_candidato")
     if not compra_dict:
-        await update.message.reply_text("⚠️ Intenta de nuevo con /ven", reply_markup=get_main_keyboard())
+        await query.edit_message_text("⚠️ Sesión expirada. Intenta de nuevo con /ven")
         return ConversationHandler.END
 
-    if texto == "s":
+    if query.data == "ven_candidato_si":
         context.user_data["venta_id"] = compra_dict["id"]
         context.user_data["compra_info"] = compra_dict
         context.user_data.pop("venta_candidato", None)
-        await update.message.reply_text(
-            f"Perfecto ✅\n\nID: {compra_dict['id']}\n📦 {compra_dict['producto']}\n\n¿A qué *precio vendiste*?",
+        est = estado_visual(compra_dict.get("fecha_devolucion", ""))
+        await query.edit_message_text(
+            f"⚠️ *CONFIRMAR VENTA*\n\n"
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{compra_dict['id']}`\n"
+            f"│ 📦 {compra_dict['producto']}\n"
+            f"│ 💰 Precio compra: ${compra_dict['precio_compra']}\n"
+            f"│ 📅 Devolución: {est}\n"
+            f"└─────────────────────────\n\n"
+            f"¿Confirmas que quieres *vender* este artículo?",
             parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sí, vender", callback_data=f"confirm_ven_{compra_dict['id']}"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="cancel_ven"),
+            ]]),
         )
         return ESPERANDO_VENTA_PRECIO
 
-    if texto == "n":
+    if query.data == "ven_candidato_no":
         context.user_data.pop("venta_candidato", None)
-        await update.message.reply_text(
-            "Entendido. Escribe el ID completo o intenta otro sufijo.",
+        await query.edit_message_text(
+            "Entendido. Escribe el ID completo o intenta con más dígitos.",
             reply_markup=get_main_keyboard(),
         )
         return ESPERANDO_VENTA_ID
 
-    await update.message.reply_text(
-        "Responde solo *s* (sí) o *n* (no).",
-        parse_mode="Markdown",
-        reply_markup=get_main_keyboard(),
-    )
     return ESPERANDO_CONFIRMAR_VENTA
 
 
@@ -1694,117 +1703,154 @@ async def cmd_devuelto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 
-async def buscar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not autorizado(update):
-        return
+def _ejecutar_busqueda(termino: str) -> list[dict]:
+    """Lógica de búsqueda reutilizable."""
+    rows = _get_all_rows()
+    termino_lower = termino.lower()
+    es_id_completo = bool(ID_COMPLETO_RE.match(termino))
+    resultados: list[dict] = []
 
-    # Obtener el término de búsqueda de los argumentos del comando
+    for i, row in enumerate(rows[1:], 1):
+        if not row:
+            continue
+        id_pedido = row[0] if len(row) > 0 else ""
+        producto  = row[2] if len(row) > 2 else ""
+        estado    = row[8] if len(row) > 8 and row[8] else "pendiente"
+
+        if es_id_completo:
+            coincide = id_pedido == termino
+        elif termino.isdigit():
+            coincide = id_pedido.endswith(termino)
+        else:
+            coincide = termino_lower in producto.lower()
+
+        if coincide:
+            try:
+                fecha_dev = datetime.strptime(row[4], "%d/%m/%Y") if len(row) > 4 and row[4] else None
+                dias = (fecha_dev - datetime.now()).days if fecha_dev else 9999
+            except Exception:
+                dias = 9999
+            resultados.append({
+                "id": id_pedido,
+                "producto": producto,
+                "precio_compra": row[3] if len(row) > 3 else "N/A",
+                "precio_venta": row[6] if len(row) > 6 else "",
+                "fecha_compra": row[1] if len(row) > 1 else "N/A",
+                "fecha_devolucion": row[4] if len(row) > 4 else "N/A",
+                "metodo_pago": row[7] if len(row) > 7 else "",
+                "estado": estado,
+                "_dias": dias,
+            })
+    return resultados
+
+
+def _formato_resultados(termino: str, resultados: list[dict]) -> str:
+    texto = (
+        f"🔍 *RESULTADOS — \"{termino}\"*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 {len(resultados)} resultado(s) encontrado(s)\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    for item in resultados:
+        estado = item["estado"]
+        if estado == "vendido":
+            detalle = f"💵 Vendido: ${item['precio_venta']}" if item.get("precio_venta") else ""
+            metodo  = f"  •  {item['metodo_pago']}" if item.get("metodo_pago") else ""
+            badge   = f"✅  *VENDIDO*{('  —  ' + detalle + metodo) if detalle else ''}"
+        elif estado == "devuelto":
+            badge = "🔄  *DEVUELTO*"
+        else:
+            est   = estado_visual(item.get("fecha_devolucion", ""))
+            badge = f"🟢  *EN STOCK*  —  Dev: {est}"
+        texto += (
+            f"┌─────────────────────────\n"
+            f"│ 🆔 `{item['id']}`\n"
+            f"│ 📦 {item['producto']}\n"
+            f"│ 💰 Compra: ${item['precio_compra']}\n"
+            f"│ {badge}\n"
+            f"└─────────────────────────\n"
+        )
+    return texto
+
+
+async def iniciar_buscar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Entry point de /bus — si viene con args busca directo, si no pide el término."""
+    if not autorizado(update):
+        return ConversationHandler.END
+
     termino = " ".join(context.args).strip() if context.args else ""
 
-    if not termino:
-        await update.message.reply_text(
-            "🔍 *BUSCAR PEDIDO*\n\n"
-            "Uso:\n"
-            "`/bus nombre del producto`\n"
-            "`/bus 3462` _(últimos dígitos del ID)_\n"
-            "`/bus 114-3982452-1531462` _(ID completo)_\n\n"
-            "_Ejemplo: /bus auriculares_",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard(),
-        )
-        return
+    if termino:
+        # Tiene argumento directo → buscar y terminar
+        msg = await update.message.reply_text(f"🔍 Buscando *{termino}*...", parse_mode="Markdown")
+        try:
+            resultados = _ejecutar_busqueda(termino)
+            if not resultados:
+                await msg.edit_text(
+                    f"❌ No se encontró ningún pedido con *{termino}*\n\nPrueba con otro término.",
+                    parse_mode="Markdown", reply_markup=get_main_keyboard(),
+                )
+            else:
+                await msg.edit_text(
+                    _formato_resultados(termino, resultados),
+                    parse_mode="Markdown", reply_markup=get_inline_compra_venta_buttons(),
+                )
+        except Exception as e:
+            logger.error(f"Error buscar: {e}")
+            await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=get_main_keyboard())
+        return ConversationHandler.END
+
+    # Sin argumento → flujo interactivo
+    await update.message.reply_text(
+        "🔍 *BUSCAR PEDIDO*\n\n"
+        "Dime qué estás buscando:\n\n"
+        "• Nombre del producto: _auriculares_\n"
+        "• Últimos dígitos del ID: _3462_\n"
+        "• ID completo: _114-3982452-1531462_\n\n"
+        "✍️ Escribe tu búsqueda:",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+    )
+    return ESPERANDO_BUSCAR
+
+
+async def recibir_termino_busqueda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe el término escrito en el flujo interactivo de /bus."""
+    if not autorizado(update):
+        return ConversationHandler.END
+
+    termino = update.message.text.strip()
+
+    if termino in MENU_BOTONES:
+        context.user_data.clear()
+        await manejar_mensaje_texto(update, context)
+        return ConversationHandler.END
 
     msg = await update.message.reply_text(f"🔍 Buscando *{termino}*...", parse_mode="Markdown")
-
     try:
-        rows = _get_all_rows()
-        termino_lower = termino.lower()
-        es_id_completo = bool(ID_COMPLETO_RE.match(termino))
-        resultados: list[dict] = []
-
-        for i, row in enumerate(rows[1:], 1):
-            if not row:
-                continue
-            id_pedido  = row[0] if len(row) > 0 else ""
-            producto   = row[2] if len(row) > 2 else ""
-            estado     = row[8] if len(row) > 8 and row[8] else "pendiente"
-
-            coincide = False
-            if es_id_completo:
-                coincide = id_pedido == termino
-            elif termino.isdigit():
-                # Búsqueda por sufijo numérico del ID
-                coincide = id_pedido.endswith(termino)
-            else:
-                # Búsqueda por nombre (parcial, insensible a mayúsculas)
-                coincide = termino_lower in producto.lower()
-
-            if coincide:
-                try:
-                    fecha_dev = datetime.strptime(row[4], "%d/%m/%Y") if len(row) > 4 and row[4] else None
-                    dias = (fecha_dev - datetime.now()).days if fecha_dev else 9999
-                except Exception:
-                    dias = 9999
-
-                resultados.append({
-                    "id": id_pedido,
-                    "producto": producto,
-                    "precio_compra": row[3] if len(row) > 3 else "N/A",
-                    "precio_venta": row[6] if len(row) > 6 else "",
-                    "fecha_compra": row[1] if len(row) > 1 else "N/A",
-                    "fecha_devolucion": row[4] if len(row) > 4 else "N/A",
-                    "metodo_pago": row[7] if len(row) > 7 else "",
-                    "estado": estado,
-                    "_dias": dias,
-                })
-
+        resultados = _ejecutar_busqueda(termino)
         if not resultados:
             await msg.edit_text(
                 f"❌ No se encontró ningún pedido con *{termino}*\n\n"
-                "Prueba con otro nombre o parte del ID.",
-                parse_mode="Markdown",
-                reply_markup=get_main_keyboard(),
+                "Prueba con otro término o usa /bus de nuevo.",
+                parse_mode="Markdown", reply_markup=get_main_keyboard(),
             )
-            return
-
-        # Encabezado
-        texto = (
-            f"🔍 *RESULTADOS — \"{termino}\"*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📋 {len(resultados)} resultado(s) encontrado(s)\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-
-        for item in resultados:
-            estado = item["estado"]
-            if estado == "vendido":
-                detalle = f"💵 Vendido: ${item['precio_venta']}" if item.get("precio_venta") else ""
-                metodo  = f"  •  {item['metodo_pago']}" if item.get("metodo_pago") else ""
-                badge   = f"✅  *VENDIDO*{('  —  ' + detalle + metodo) if detalle else ''}"
-            elif estado == "devuelto":
-                badge = "🔄  *DEVUELTO*"
-            else:
-                est   = estado_visual(item.get("fecha_devolucion", ""))
-                badge = f"🟢  *EN STOCK*  —  Dev: {est}"
-
-            texto += (
-                f"┌─────────────────────────\n"
-                f"│ 🆔 `{item['id']}`\n"
-                f"│ 📦 {item['producto']}\n"
-                f"│ 💰 Compra: ${item['precio_compra']}\n"
-                f"│ {badge}\n"
-                f"└─────────────────────────\n"
+        else:
+            await msg.edit_text(
+                _formato_resultados(termino, resultados),
+                parse_mode="Markdown", reply_markup=get_inline_compra_venta_buttons(),
             )
-
-        await msg.edit_text(
-            texto,
-            parse_mode="Markdown",
-            reply_markup=get_inline_compra_venta_buttons(),
-        )
-
     except Exception as e:
-        logger.error(f"Error buscar_pedido: {e}")
+        logger.error(f"Error buscar: {e}")
         await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=get_main_keyboard())
+
+    return ConversationHandler.END
+
+
+# Alias para compatibilidad con el CommandHandler simple
+buscar_pedido = iniciar_buscar
+
+
 
 
 
@@ -2146,7 +2192,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_id_venta),
             ],
             ESPERANDO_CONFIRMAR_VENTA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_venta_por_sufijo),
+                CallbackQueryHandler(confirmar_venta_por_sufijo, pattern="^ven_candidato_"),
             ],
             ESPERANDO_VENTA_PRECIO: [
                 CallbackQueryHandler(confirmar_inicio_venta, pattern="^(confirm_ven_|cancel_ven)"),
@@ -2200,15 +2246,27 @@ def main() -> None:
         fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
     )
 
+    buscar_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler(["buscar", "bus"], iniciar_buscar),
+        ],
+        states={
+            ESPERANDO_BUSCAR: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_termino_busqueda),
+            ],
+        },
+        fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
+    )
+
     application.add_handler(compra_conv)
     application.add_handler(venta_conv)
     application.add_handler(review_conv)
     application.add_handler(eliminar_conv)
+    application.add_handler(buscar_conv)
     application.add_handler(CallbackQueryHandler(manejar_callback))
     application.add_handler(CommandHandler(["start"], start))
     application.add_handler(CommandHandler(["ayuda", "ayu"], ayuda))
     application.add_handler(CommandHandler(["inventario", "inv", "lis"], inventario))
-    application.add_handler(CommandHandler(["buscar", "bus"], buscar_pedido))
     application.add_handler(CommandHandler(["devuelto", "dev"], cmd_devuelto))
     application.add_handler(CommandHandler(["cancelar", "can"], cancelar))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, manejar_foto))
