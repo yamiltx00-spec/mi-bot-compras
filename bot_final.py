@@ -2219,6 +2219,8 @@ def main() -> None:
             ],
         },
         fallbacks=[CommandHandler(["cancelar", "can"], cancelar), cancelar_texto_handler],
+        per_message=False,
+        per_chat=True,
     )
 
     review_conv = ConversationHandler(
