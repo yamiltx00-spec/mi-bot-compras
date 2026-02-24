@@ -829,7 +829,7 @@ async def procesar_compra(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return ConversationHandler.END
 
     if not update.message.photo:
-        await update.message.reply_text("❌ Envía una imagen", reply_markup=get_main_keyboard())
+        await update.message.reply_text("❌ Envía una imagen", reply_markup=None)
         return ESPERANDO_COMPRA_FOTO
 
     photo = update.message.photo[-1]
@@ -1077,7 +1077,7 @@ async def recibir_precio_venta(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ESPERANDO_VENTA_METODO
     except ValueError:
-        await update.message.reply_text("❌ Solo números. Ejemplo: 75.50", reply_markup=get_main_keyboard())
+        await update.message.reply_text("❌ Solo números. Ejemplo: 75.50", reply_markup=None)
         return ESPERANDO_VENTA_PRECIO
 
 
@@ -1147,7 +1147,7 @@ async def procesar_foto_review(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     if not update.message.photo:
-        await update.message.reply_text("❌ Envía una imagen del producto", reply_markup=get_main_keyboard())
+        await update.message.reply_text("❌ Envía una imagen del producto", reply_markup=None)
         return ESPERANDO_REVIEW_FOTOS
 
     photo = update.message.photo[-1]
@@ -1328,7 +1328,7 @@ async def recibir_id_eliminar(update: Update, context: ContextTypes.DEFAULT_TYPE
         for i, c in enumerate(compra[:5], 1):
             mensaje += f"{i}. `{c.id}` - {c.producto[:30]}...\n"
         mensaje += "\nEscribe el ID completo del que quieres eliminar."
-        await update.message.reply_text(mensaje, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        await update.message.reply_text(mensaje, parse_mode="Markdown", reply_markup=None)
         return ESPERANDO_ID_ELIMINAR
 
     await update.message.reply_text(
@@ -1706,7 +1706,7 @@ async def cmd_devuelto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         for c in compra[:5]:
             est = estado_visual(c.fecha_devolucion)
             lista += f"• `{c.id}` — {c.producto[:25]}... | {est}\n"
-        await msg.edit_text(lista, parse_mode="Markdown", reply_markup=get_main_keyboard())
+        await msg.edit_text(lista, parse_mode="Markdown", reply_markup=None)
         return
 
     await msg.edit_text(
@@ -1811,7 +1811,7 @@ async def iniciar_buscar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
         except Exception as e:
             logger.error(f"Error buscar: {e}")
-            await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=get_main_keyboard())
+            await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=None)
         return ConversationHandler.END
 
     # Sin argumento → flujo interactivo
@@ -1856,7 +1856,7 @@ async def recibir_termino_busqueda(update: Update, context: ContextTypes.DEFAULT
             )
     except Exception as e:
         logger.error(f"Error buscar: {e}")
-        await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=get_main_keyboard())
+        await msg.edit_text("❌ Error al realizar la búsqueda.", reply_markup=None)
 
     return ConversationHandler.END
 
@@ -2021,7 +2021,7 @@ async def manejar_mensaje_texto(update: Update, context: ContextTypes.DEFAULT_TY
         if texto_lower in ("cancelar", "exit", "salir", "cancel"):
             _limpiar_fotos_temporales(context)
             context.user_data.clear()
-            await update.message.reply_text("❌ Operación cancelada.", reply_markup=get_main_keyboard())
+            await update.message.reply_text("❌ Operación cancelada.", reply_markup=None)
             return
         await procesar_precio_rapido(update, context)
         return
