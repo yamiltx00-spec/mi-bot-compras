@@ -635,42 +635,68 @@ def generar_review_con_gemini_multiples_imagenes(
         "profesional": "Uso específico/profesional (Lo uso en mi taller..., Para la oficina...)",
     }.get(uso, "Uso personal")
 
-    prompt = f"""Actúa como un Experto en Análisis de Comportamiento de Consumidores y Ciberseguridad, especializado en ingeniería de reseñas para Amazon. Tu objetivo es generar contenido que supere los algoritmos de detección de fraude mediante la simulación de comportamiento humano auténtico, imperfecto y detallado.
+    prompt = f"""Actúa como un experto en análisis de comportamiento de consumidores y en ciberseguridad, especializado en crear reseñas para Amazon que sean honestas, detalladas y versátiles. Tu objetivo es generar reseñas que construyan un perfil de reseñador real y creíble.
 
-Directiva Principal: La autenticidad es prioridad sobre la perfección. Toda salida debe parecer escrita por un humano real, con emociones, contexto y fallas naturales, cumpliendo estrictamente las Políticas de Amazon.
+Principio Fundamental: La autenticidad se logra con la honestidad, el detalle y la imperfección humana. Un buen reseñador es versátil, honesto y útil. Debes escribir como una persona real que da su opinión sobre el producto físico, su rendimiento y su uso, sin desviarte a temas de servicio, precio o promoción.
 
 CONFIGURACIÓN PARA ESTA RESEÑA:
 - Calificación: {estrellas} estrellas
 - Contexto de uso: {uso_desc}
 {f'- Producto detectado: {producto_nombre}' if producto_nombre else ''}
+- Número de imágenes a analizar: {len(image_paths)}
 
-ANÁLISIS DE IMÁGENES:
-Analiza las {len(image_paths)} imágenes proporcionadas del producto. Observa detalles como: marca, modelo, especificaciones técnicas visibles, estado físico, empaquetado, etiquetas, y cualquier característica relevante que puedas identificar. Integra estos detalles técnicos de forma natural en la reseña, no como lista.
+MÓDULO 1: ANTES DE ESCRIBIR
+Define internamente (no lo muestres):
+- Destinatario aleatorio: "Para mí", "Para mi esposa", "Para mi hijo/hija", "Para mi padre/madre"
+- Usa ese destinatario de forma natural en el cuerpo de la reseña
 
-PROTOCOLO DE SEGURIDAD Y CUMPLIMIENTO (PRIORIDAD MÁXIMA):
-- 🚫 LOGÍSTICA: Prohibido mencionar envío, empaquetado, tiempo de entrega o servicio al cliente.
-- 🚫 PRECIO: Prohibido mencionar costos, ofertas, descuentos o "relación calidad-precio" literal.
-- 🚫 PROMOCIÓN: Prohibido lenguaje de marketing, hipérboles ("El mejor del mundo"), enlaces o códigos.
-- 🚫 DATOS: Prohibido incluir información personal o externa.
-- No generar contenido que implique incentivos, conflicto de intereses, intercambio de reseñas o autopromoción.
-- Evita patrones repetitivos, texto genérico ("Buen producto"), o estructura demasiado perfecta/robótica.
+MÓDULO 2: ESTRUCTURA Y FORMATO
+Título (Pensamiento Espontáneo):
+- Corto y natural (4-12 palabras)
+- Debe sonar como una exclamación o frase espontánea, no un resumen técnico
+- Ejemplos: "Deep impact full", "Hidden Thunder", "Great for the price"
 
-REGLAS DE ESCRITURA:
-1. Inserta entre 1 y 5 errores naturales (ortográficos leves, gramaticales moderados, de tipeo).
-2. Varía la longitud de oraciones (cortas vs. largas).
-3. Usa 0 o 1 emoji máximo en posición aleatoria.
-4. Opcionalmente menciona contexto geográfico vago ("aquí en la costa", "con este frío").
-5. Usa expresiones coloquiales.
+Longitud: Entre 90 y 199 palabras. Varía la longitud para evitar patrones.
 
-ESTRUCTURA REQUERIDA:
-- Título: 4 a 12 palabras, sonido de exclamación o pensamiento repentino.
-- Cuerpo: 60-180 palabras con:
-  * Inicio conversacional variado
-  * Integración técnica de especificaciones vistas en las imágenes dentro de la anécdota
-  * Descripción del entorno físico de uso
-  * Punto medio con defecto menor si es 5 estrellas, o algo decente si es 1-2 estrellas
-  * Cierre personal subjetivo (PROHIBIDO "Lo recomiendo 100%")
+MÓDULO 3: TONO Y ESTILO (SIMULACIÓN HUMANA AVANZADA)
+Errores (CRÍTICO — incluir siempre):
+- Entre 1 y 9 errores de gravedad aleatoria
+- Leve: "facil" (sin tilde), "muybueno", "si" en lugar de "sí"
+- Moderado: "prodcuto", "instalcion", "aora"
+- Grave pero comprensible: frases con sintaxis natural pero imperfecta
 
+Estilo humano:
+- Mezcla oraciones cortas y largas de forma natural
+- Incluye alguna repetición casual (ej: "Es muy fácil, muy fácil de usar")
+- 0 o 1 emoji por reseña, posición aleatoria y natural
+
+MÓDULO 4: CONTENIDO
+Análisis de imágenes: Extrae toda la info visual posible (nombre, marca, especificaciones, estado físico, empaquetado, etiquetas). Integra los detalles técnicos de forma narrativa, no como lista.
+
+Experiencia personal:
+- Usa frases de inicio variadas: "La verdad...", "Mi hijo no para de...", "Yo la uso para..."
+- Menciona dónde se instaló/usó el producto (ej: "sobre la mesa de la cocina", "en el carro")
+- Integra especificaciones técnicas dentro de la narrativa como experiencia de uso
+- Incluye algo que solo un usuario real notaría (cable corto, olor a nuevo, instrucciones confusas)
+- Usa lenguaje coloquial y emocional que refleje personalidad real
+
+El "Pero" (señal de autenticidad):
+- 4-5 estrellas: incluye una mínima desventaja que no justifique quitar más de una estrella
+- 1-2 estrellas: menciona algo positivo por pequeño que sea
+- 3 estrellas: explica pros y contras con claridad
+
+Cierre (NUNCA usar "Lo recomiendo" o "100% recomendable"):
+- Ejemplos válidos: "Para mí fue una compra excelente.", "No volvería a comprar.", "Mi esposa está encantada, así que para mí fue un acierto."
+
+MÓDULO 5: REGLAS DE ORO (NUNCA VIOLAR)
+🚫 NO mencionar envío, empaquetado, tiempo de entrega o atención al cliente
+🚫 NO mencionar precio, ofertas o descuentos
+🚫 NO usar lenguaje de marketing o hipérboles ("El mejor del mundo")
+🚫 NO información personal identificable
+🚫 NO mencionar reseñas incentivadas o producto recibido gratis
+🚫 NO repetir estructuras entre reseñas
+
+FORMATO DE SALIDA:
 Genera DOS VERSIONES independientes:
 
 [RESEÑA EN ESPAÑOL]
